@@ -1,0 +1,13 @@
+{
+  "name": "habithive-ai",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @habithive/web",
+    "dev:realtime": "npm run dev -w @habithive/realtime",
+    "dev:worker": "npm run dev -w @habithive/worker"
+  }
+}

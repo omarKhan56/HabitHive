@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+enum Habit {
+  gym
+  wake_up_early
+  reading
+  coding
+  meditation
+}
+
+enum HiveStatus {
+  active
+  dissolved
+}
+
+enum NotificationType {
+  reminder
+  dissolution
+  rematch
+  ai_suggestion
+}
+
+enum AiInsightType {
+  weekly_summary
+  suggestion
+  risk_score
+}
+
+model User {
+  id                    String    @id @default(uuid())
+  name                  String
+  email                 String    @unique
+  passwordHash          String    @map("password_hash")
+  role                  UserRole  @default(user)
+  habit                 Habit
+  timezone              String
+  language              String    @default("en")
+  preferredCheckinTime  String    @map("preferred_checkin_time") // "HH:MM"
+  currentHiveId         String?   @map("current_hive_id")
+  currentHive           Hive?     @relation("CurrentHive", fields: [currentHiveId], references: [id])
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  hiveMemberships HiveMember[]
+  checkIns        CheckIn[]
+  messages        Message[]
+  notifications   Notification[]
+  aiInsights      AiInsight[]
+  auditLogs       AuditLog[]      @relation("Actor")
+
+  @@map("users")
+}
+
+model Hive {
+  id                  String    @id @default(uuid())
+  status              HiveStatus
+  habit               Habit
+  compatibilityScore  Int       @map("compatibility_score")
+  startedAt           DateTime  @default(now()) @map("started_at")
+  dissolvedAt         DateTime? @map("dissolved_at")
+  dissolutionReason   String?   @map("dissolution_reason")
+
+  members   HiveMember[]
+  checkIns  CheckIn[]
+  messages  Message[]
+  currentMembers User[] @relation("CurrentHive")
+
+  @@map("hives")
+}
+
+model HiveMember {
+  id        String   @id @default(uuid())
+  hiveId    String   @map("hive_id")
+  userId    String   @map("user_id")
+  missCount Int      @default(0) @map("miss_count")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  hive Hive @relation(fields: [hiveId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([hiveId, userId])
+  @@index([hiveId, userId])
+  @@map("hive_members")
+}
+
+model CheckIn {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  hiveId    String   @map("hive_id")
+  date      DateTime @db.Date
+  text      String?
+  photoUrl  String?  @map("photo_url")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hive Hive @relation(fields: [hiveId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@map("checkins")
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  hiveId    String   @map("hive_id")
+  userId    String   @map("user_id")
+  body      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  hive Hive @relation(fields: [hiveId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([hiveId])
+  @@index([hiveId, createdAt])
+  @@map("messages")
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  payload   Json
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+model AiInsight {
+  id        String         @id @default(uuid())
+  userId    String         @map("user_id")
+  type      AiInsightType
+  content   String // LLM-generated text (now produced via Groq, see ai.service.ts)
+  riskScore Float?         @map("risk_score")
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ai_insights")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  actorId   String   @map("actor_id")
+  action    String
+  metadata  Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  actor User @relation("Actor", fields: [actorId], references: [id])
+
+  @@map("audit_logs")
+}

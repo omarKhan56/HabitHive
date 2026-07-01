@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+ 
+:root {
+  --hive-amber: #f59e0b;
+}
+ 
+* {
+  border-color: theme("colors.slate.200");
+}
+ 
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+ 
+/* Keep focus rings visible everywhere — accessibility requirement (sec 1.7) */
+:focus-visible {
+  outline: 2px solid var(--hive-amber);
+  outline-offset: 2px;
+}
+ 
