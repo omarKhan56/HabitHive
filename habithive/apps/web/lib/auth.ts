@@ -16,11 +16,8 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
 
-        // Redis-backed rate limit (sec 2.4 / 2.8) — checked before touching the DB.
         const withinLimit = await checkLoginRateLimit(credentials.email);
-        if (!withinLimit) {
-          throw new Error("TOO_MANY_ATTEMPTS");
-        }
+        if (!withinLimit) throw new Error("TOO_MANY_ATTEMPTS");
 
         const user = await db.user.findUnique({
           where: { email: credentials.email },
@@ -38,7 +35,6 @@ export const authOptions: NextAuthOptions = {
         };
       },
     }),
-    // Optional OAuth, per section 1.4
     ...(process.env.GOOGLE_CLIENT_ID
       ? [
           GoogleProvider({
@@ -56,19 +52,17 @@ export const authOptions: NextAuthOptions = {
       }
       return token;
     },
-async session({ session, token }) {
-  if (session.user) {
-    (session.user as any).id = token.id;
-    (session.user as any).role = token.role;
-  }
-  // Forward the raw JWT so the Socket.io client can authenticate
-  // against the realtime service's next-auth/jwt decode() call (sec 2.6).
-  (session as any).accessToken = token as unknown as string;
-  return session;
-},
+    async session({ session, token }) {
+      if (session.user) {
+        (session.user as any).id = token.id;
+        (session.user as any).role = token.role;
+      }
+      // Pass the raw token sub (user ID) directly — the realtime service
+      // will use this to identify the user without needing JWT decode.
+      (session as any).accessToken = token.id as string;
+      return session;
+    },
   },
-  pages: {
-    signIn: "/login",
-  },
+  pages: { signIn: "/login" },
   secret: process.env.NEXTAUTH_SECRET,
 };

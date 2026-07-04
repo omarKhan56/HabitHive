@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { signOut } from "next-auth/react";
+import { useSession } from "next-auth/react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   CheckSquare,
   BarChart2,
   Bot,
-  MessageCircle,
   LogOut,
 } from "lucide-react";
 import { Avatar, Button } from "@/components/ui";
@@ -24,7 +25,15 @@ const NAV_ITEMS = [
 export function Navbar() {
   const pathname = usePathname();
   const { data: session } = useSession();
+  const queryClient = useQueryClient();
   const user = session?.user;
+
+  async function handleSignOut() {
+    // Clear ALL cached queries before signing out so the
+    // next user starts with a completely fresh cache.
+    queryClient.clear();
+    await signOut({ callbackUrl: "/login" });
+  }
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-slate-200 bg-white">
@@ -63,7 +72,7 @@ export function Navbar() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={handleSignOut}
             className="hidden sm:flex"
           >
             <LogOut className="h-4 w-4" />

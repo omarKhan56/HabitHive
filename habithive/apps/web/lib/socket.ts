@@ -6,21 +6,55 @@ import type {
   ServerToClientEvents,
 } from "@habithive/shared/schemas";
 
-let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+type AppSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
 
-/** Initializes (once per session) and returns the shared Socket.io client. */
-export function getSocket(sessionToken: string) {
-  if (socket) return socket;
+let socket: AppSocket | null = null;
+let currentToken: string | null = null;
 
-  socket = io(process.env.NEXT_PUBLIC_REALTIME_URL ?? "http://localhost:4000", {
-    auth: { token: sessionToken },
-    transports: ["websocket"],
-  });
+/**
+ * Returns the existing socket if the token hasn't changed,
+ * otherwise creates a new one. This prevents the race condition
+ * caused by Fast Refresh disconnecting and immediately reconnecting.
+ */
+export function getSocket(token: string): AppSocket {
+  // Reuse existing connected socket if token is the same
+  if (socket && currentToken === token && socket.connected) {
+    return socket;
+  }
+
+  // Clean up old socket if token changed or socket is dead
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+  }
+
+  currentToken = token;
+
+  socket = io(
+    process.env.NEXT_PUBLIC_REALTIME_URL ?? "http://localhost:4000",
+    {
+      auth: { token },
+      transports: ["websocket"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+    }
+  ) as AppSocket;
 
   return socket;
 }
 
 export function disconnectSocket() {
-  socket?.disconnect();
-  socket = null;
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+    currentToken = null;
+  }
+}
+
+export function getExistingSocket(): AppSocket | null {
+  return socket;
 }

@@ -19,11 +19,6 @@ type CredentialsInput = z.infer<typeof CredentialsSchema>;
 
 type Stage = "credentials" | "onboarding";
 
-/**
- * Two-stage signup: collect name/email/password, then hand off to
- * OnboardingWizard for habit/timezone/language/check-in time. On completion,
- * calls the signupAction Server Action and signs the user straight in.
- */
 export function SignupForm() {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("credentials");
@@ -56,6 +51,7 @@ export function SignupForm() {
     formData.set("language", onboarding.language);
     formData.set("preferredCheckinTime", onboarding.preferredCheckinTime);
 
+    // Step 1: Create account + run matching
     const result = await signupAction(formData);
 
     if (!result.ok) {
@@ -69,6 +65,7 @@ export function SignupForm() {
       return;
     }
 
+    // Step 2: Sign in
     const signInResult = await signIn("credentials", {
       email: credentials.email,
       password: credentials.password,
@@ -78,13 +75,15 @@ export function SignupForm() {
     setSubmitting(false);
 
     if (signInResult?.error) {
-      // Account was created but auto sign-in failed — send them to login.
       router.push("/login");
       return;
     }
 
-    router.push("/dashboard");
-    router.refresh();
+    // Step 3: Navigate to dashboard
+    // Use window.location.href instead of router.push so the entire page
+    // reloads fresh — this clears any stale React Query cache and forces
+    // GET /api/hives to run with the newly created session.
+    window.location.href = "/dashboard";
   }
 
   if (stage === "onboarding") {

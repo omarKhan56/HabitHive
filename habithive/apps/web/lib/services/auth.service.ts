@@ -15,7 +15,6 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
   return bcrypt.compare(plain, hash);
 }
 
-/** Redis-backed rate limiter for login attempts, keyed by email (sec 2.4 / 2.8). */
 export async function checkLoginRateLimit(email: string): Promise<boolean> {
   const key = `ratelimit:login:${email}`;
   const attempts = await redis.incr(key);
@@ -25,16 +24,9 @@ export async function checkLoginRateLimit(email: string): Promise<boolean> {
   return attempts <= LOGIN_RATE_LIMIT_MAX_ATTEMPTS;
 }
 
-/**
- * Creates the user record, then enqueues them into the matching pool.
- * The actual hive-formation run happens async (Matching Service / worker),
- * so this returns quickly.
- */
 export async function signupUser(input: SignupInput) {
   const existing = await db.user.findUnique({ where: { email: input.email } });
-  if (existing) {
-    throw new Error("EMAIL_TAKEN");
-  }
+  if (existing) throw new Error("EMAIL_TAKEN");
 
   const passwordHash = await hashPassword(input.password);
 
@@ -50,18 +42,18 @@ export async function signupUser(input: SignupInput) {
     },
   });
 
-  // Push onto the waiting pool (a simple Redis set per habit); the Matching
-  // Service / worker consumes this to attempt hive formation.
-  await redis.sadd(`matching:pool:${input.habit}`, user.id);
+  console.log(`[matching] adding user ${user.id} to pool: matching:pool:${input.habit}`);
+  const poolSize = await redis.sadd(`matching:pool:${input.habit}`, user.id);
+  const currentPool = await redis.smembers(`matching:pool:${input.habit}`);
+  console.log(`[matching] pool size: ${currentPool.length}, members: ${currentPool}`);
 
-  // Attempt to form a hive immediately — the pool just changed, which is
-  // exactly the trigger condition described for the Matching Service
-  // (sec 2.4). If there still aren't enough compatible users, this is a
-  // no-op and the user simply waits in the pool for the next signup.
-  await runMatchingForHabit(input.habit).catch((err) => {
-    // Never let a matching hiccup fail the signup itself.
-    console.error("[auth.service] matching attempt failed after signup", err);
-  });
+  try {
+    console.log(`[matching] running matching for habit: ${input.habit}`);
+    const result = await runMatchingForHabit(input.habit);
+    console.log(`[matching] result: ${result.formed} hive(s) formed`);
+  } catch (err) {
+    console.error("[matching] runMatchingForHabit failed:", err);
+  }
 
   return user;
 }

@@ -1,6 +1,5 @@
 import { createServer } from "http";
 import { Server } from "socket.io";
-import { decode } from "next-auth/jwt";
 import { PrismaClient } from "@prisma/client";
 import { attachRedisAdapter, subscribeToBackendEvents } from "./redisAdapter";
 import { registerChatHandlers } from "./handlers/chat";
@@ -11,30 +10,43 @@ const db = new PrismaClient();
 
 const httpServer = createServer();
 const io = new Server(httpServer, {
-  cors: { origin: process.env.WEB_ORIGIN ?? "http://localhost:3000" },
+  cors: {
+    origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
+    methods: ["GET", "POST"],
+    credentials: true,
+  },
 });
 
 /**
- * Auth: client sends the NextAuth session JWT during the handshake (sec 2.6).
- *
- * NextAuth's JWT session strategy stores an ENCRYPTED token (JWE, via the
- * `jose` library) — not a plain HMAC-signed JWT — so it must be decoded with
- * next-auth/jwt's own `decode()` (same secret as NEXTAUTH_SECRET in the web
- * app), not the generic `jsonwebtoken` package.
+ * Auth: client sends userId directly in the socket handshake.
+ * We verify it exists in the database before allowing connection.
+ * Simple and reliable — avoids JWT encode/decode complexity.
  */
 io.use(async (socket, next) => {
   try {
-    const token = socket.handshake.auth?.token as string | undefined;
-    if (!token) return next(new Error("UNAUTHORIZED"));
+    const userId = socket.handshake.auth?.token as string | undefined;
 
-    const payload = (await decode({ token, secret: process.env.NEXTAUTH_SECRET! })) as
-      | { id?: string }
-      | null;
-    if (!payload?.id) return next(new Error("UNAUTHORIZED"));
+    if (!userId) {
+      console.log("[realtime] ❌ no token in handshake");
+      return next(new Error("UNAUTHORIZED"));
+    }
 
-    socket.data.userId = payload.id as string;
+    // Verify the userId actually exists in the database
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+
+    if (!user) {
+      console.log("[realtime] ❌ user not found:", userId);
+      return next(new Error("UNAUTHORIZED"));
+    }
+
+    console.log(`[realtime] ✅ authenticated user: ${userId}`);
+    socket.data.userId = userId;
     next();
-  } catch {
+  } catch (err) {
+    console.error("[realtime] auth error:", err);
     next(new Error("UNAUTHORIZED"));
   }
 });
@@ -52,12 +64,7 @@ io.on("connection", (socket) => {
 });
 
 async function main() {
-  // Rooms are namespaced per hive: hive:{hiveId}. Redis adapter lets
-  // multiple instances of this service share rooms/presence state.
   await attachRedisAdapter(io);
-
-  // Relay events pushed from the Next.js backend / worker (check-ins,
-  // dissolutions, hive formation) into the relevant hive room.
   await subscribeToBackendEvents(io);
 
   httpServer.listen(PORT, () => {

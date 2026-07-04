@@ -16,13 +16,16 @@ export async function signupAction(formData: FormData) {
 
   const parsed = SignupSchema.safeParse(raw);
   if (!parsed.success) {
+    console.error("[signup] validation failed:", parsed.error.flatten());
     return { ok: false as const, error: parsed.error.flatten() };
   }
 
   try {
     const user = await signupUser(parsed.data);
+    console.log(`[signup] user created: ${user.id}, habit: ${user.habit}`);
     return { ok: true as const, userId: user.id };
   } catch (err: any) {
+    console.error("[signup] error:", err.message);
     if (err.message === "EMAIL_TAKEN") {
       return { ok: false as const, error: "An account with this email already exists." };
     }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { getSocket, disconnectSocket } from "@/lib/socket";
+import { getSocket } from "@/lib/socket";
 import { useSocketStore } from "@/store/useSocketStore";
 
 export interface ChatMessage {
@@ -22,73 +22,112 @@ export interface UseChatResult {
   stopTyping: () => void;
 }
 
-/**
- * Manages the Socket.io connection for a specific hive chat room.
- * Connects on mount, joins the hive room, listens for message:new and
- * presence:update events, and disconnects on unmount.
- * Wired to the realtime service (apps/realtime/handlers/chat.ts).
- */
 export function useChat(hiveId: string): UseChatResult {
-  const { data: session } = useSession();
+  const { data: session, status } = useSession();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
-  const { setSocket, setConnected, setPresence, clearSocket, connected } =
-    useSocketStore();
+  const { setSocket, setConnected, setPresence, connected } = useSocketStore();
   const typingTimeout = useRef<NodeJS.Timeout | null>(null);
+  const hiveIdRef = useRef(hiveId);
+  hiveIdRef.current = hiveId;
 
   useEffect(() => {
-    if (!session?.user) return;
+    // Wait for session to fully load
+    if (status !== "authenticated" || !session?.user) return;
 
-    const token = (session as any)?.accessToken ?? "";
+    const token = (session as any)?.accessToken as string ?? "";
+
+    if (!token) {
+      console.error("[chat] No accessToken in session");
+      return;
+    }
+
+    console.log("[chat] initializing socket, token length:", token.length);
+
     const socket = getSocket(token);
     setSocket(socket);
 
-    socket.on("connect", () => {
+    function onConnect() {
+      console.log("[chat] ✅ connected to realtime service");
       setConnected(true);
-      socket.emit("hive:join" as any, hiveId);
-    });
+      socket.emit("hive:join" as any, hiveIdRef.current);
+    }
 
-    socket.on("disconnect", () => setConnected(false));
+    function onDisconnect(reason: string) {
+      console.log("[chat] disconnected:", reason);
+      setConnected(false);
+    }
 
-    socket.on("message:new", (msg) => {
-      if (msg.hiveId !== hiveId) return;
+    function onConnectError(err: Error) {
+      console.error("[chat] ❌ connection error:", err.message);
+      setConnected(false);
+    }
+
+    function onMessageNew(msg: {
+      id: string;
+      hiveId: string;
+      userId: string;
+      body: string;
+      createdAt: string;
+    }) {
+      if (msg.hiveId !== hiveIdRef.current) return;
       setMessages((prev) => {
-        // Deduplicate by id in case of re-delivery
         if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
-    });
+    }
 
-    socket.on("presence:update", ({ userId, online }) => {
+    function onPresenceUpdate({
+      userId,
+      online,
+    }: {
+      hiveId: string;
+      userId: string;
+      online: boolean;
+    }) {
       setPresence(userId, online);
-      // Remove from typing list when they go offline
       if (!online) {
         setTypingUserIds((prev) => prev.filter((id) => id !== userId));
       }
-    });
+    }
 
-    // Typing indicators — not part of the shared socket type since they're
-    // handled as custom presence signals; cast as any to keep schemas clean.
-    (socket as any).on(
-      "typing:update",
-      ({ userId, typing }: { userId: string; typing: boolean }) => {
-        setTypingUserIds((prev) =>
-          typing ? [...new Set([...prev, userId])] : prev.filter((id) => id !== userId)
-        );
-      }
-    );
+    function onTypingUpdate({
+      userId,
+      typing,
+    }: {
+      userId: string;
+      typing: boolean;
+    }) {
+      setTypingUserIds((prev) =>
+        typing
+          ? [...new Set([...prev, userId])]
+          : prev.filter((id) => id !== userId)
+      );
+    }
+
+    // If already connected, just join the room
+    if (socket.connected) {
+      onConnect();
+    }
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
+    socket.on("message:new", onMessageNew);
+    socket.on("presence:update", onPresenceUpdate);
+    (socket as any).on("typing:update", onTypingUpdate);
 
     return () => {
-      socket.emit("hive:leave" as any, hiveId);
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("message:new");
-      socket.off("presence:update");
-      (socket as any).off("typing:update");
-      clearSocket();
-      disconnectSocket();
+      // Only remove event listeners on cleanup — do NOT disconnect.
+      // Disconnecting here causes the Fast Refresh race condition.
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
+      socket.off("message:new", onMessageNew);
+      socket.off("presence:update", onPresenceUpdate);
+      (socket as any).off("typing:update", onTypingUpdate);
     };
-  }, [hiveId, session]);
+  }, [hiveId, session, status]);
 
   function send(body: string) {
     const { socket } = useSocketStore.getState();
