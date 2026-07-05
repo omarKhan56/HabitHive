@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
 import { getSocket } from "@/lib/socket";
 import { useSocketStore } from "@/store/useSocketStore";
+import { getMessageHistory } from "@/lib/api-client";
 
 export interface ChatMessage {
   id: string;
@@ -26,13 +27,28 @@ export function useChat(hiveId: string): UseChatResult {
   const { data: session, status } = useSession();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [typingUserIds, setTypingUserIds] = useState<string[]>([]);
-  const { setSocket, setConnected, setPresence, connected } = useSocketStore();
+  const { setSocket, setConnected, setPresence, connected } =
+    useSocketStore();
   const typingTimeout = useRef<NodeJS.Timeout | null>(null);
   const hiveIdRef = useRef(hiveId);
   hiveIdRef.current = hiveId;
 
+  // Load message history from DB when the chat page opens
   useEffect(() => {
-    // Wait for session to fully load
+    if (status !== "authenticated") return;
+
+    getMessageHistory(hiveId)
+      .then((history) => {
+        console.log(`[chat] loaded ${history.length} historical messages`);
+        setMessages(history);
+      })
+      .catch((err) => {
+        console.error("[chat] failed to load message history:", err);
+      });
+  }, [hiveId, status]);
+
+  // Set up real-time socket connection
+  useEffect(() => {
     if (status !== "authenticated" || !session?.user) return;
 
     const token = (session as any)?.accessToken as string ?? "";
@@ -72,6 +88,7 @@ export function useChat(hiveId: string): UseChatResult {
     }) {
       if (msg.hiveId !== hiveIdRef.current) return;
       setMessages((prev) => {
+        // Deduplicate — message might already be in history
         if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
@@ -105,7 +122,6 @@ export function useChat(hiveId: string): UseChatResult {
       );
     }
 
-    // If already connected, just join the room
     if (socket.connected) {
       onConnect();
     }
@@ -118,8 +134,6 @@ export function useChat(hiveId: string): UseChatResult {
     (socket as any).on("typing:update", onTypingUpdate);
 
     return () => {
-      // Only remove event listeners on cleanup — do NOT disconnect.
-      // Disconnecting here causes the Fast Refresh race condition.
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("connect_error", onConnectError);

@@ -88,3 +88,19 @@ export function getWeeklySummary() {
 }
 
 export { ApiError };
+
+/* ----------------------------- Messages ----------------------------- */
+
+export interface MessageDTO {
+  id: string;
+  hiveId: string;
+  userId: string;
+  body: string;
+  createdAt: string;
+}
+
+export function getMessageHistory(hiveId: string) {
+  return request<MessageDTO[]>(
+    `/api/messages?hiveId=${encodeURIComponent(hiveId)}`
+  );
+}
