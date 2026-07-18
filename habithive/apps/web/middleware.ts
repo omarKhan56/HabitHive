@@ -1,10 +1,6 @@
 import { withAuth } from "next-auth/middleware";
 import { NextResponse } from "next/server";
 
-/**
- * Protects (dashboard) and (admin) route groups, redirecting unauthenticated
- * users to /login, and gating /admin behind the admin role (sec 1.4).
- */
 export default withAuth(
   function middleware(req) {
     const isAdminRoute = req.nextUrl.pathname.startsWith("/admin");
@@ -27,5 +23,6 @@ export const config = {
     "/analytics/:path*",
     "/coach/:path*",
     "/admin/:path*",
+    // NOTE: /internal is intentionally excluded — accessed by Puppeteer only
   ],
 };
